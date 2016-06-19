@@ -1,30 +1,133 @@
-language: c
-compiler: clang
-branches:
-    only:
-        - ci
-        - master
-os:
-    - linux
-    - osx
-sudo: false
+# OSX/Linux (https://github.com/travis-ci-tester/toolchain-table)
+
+language:
+  - cpp
+
+# Container-based infrastructure (Linux)
+# * https://docs.travis-ci.com/user/migrating-from-legacy/#How-can-I-use-container-based-infrastructure%3F
+sudo:
+  - false
+
+# Install packages differs for container-based infrastructure
+# * https://docs.travis-ci.com/user/migrating-from-legacy/#How-do-I-install-APT-sources-and-packages%3F
+# * http://stackoverflow.com/a/30925448/2288008
 addons:
-    apt:
-        sources:
-            - kubuntu-backports
-        packages:
-            - cmake
-env:
-    - BUILD_SHARED_LIBS=ON
-    - BUILD_SHARED_LIBS=OFF
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - python3
+
+      # python3-pip package is not available, use 'easy_install3':
+      # * https://github.com/travis-ci/apt-package-whitelist/issues/768
+      - python3-setuptools # easy_install3
+
+      # https://github.com/travis-ci-tester/travis-test-clang-cxx-11
+      - libstdc++-4.8-dev
+
+      # https://github.com/travis-ci-tester/travis-test-gcc-cxx-11
+      - g++-4.8
+
+      # For Qt
+      - libegl1-mesa-dev
+
+      # Packages for Android development: http://superuser.com/a/360398/252568
+      - libncurses5:i386
+      - libstdc++6:i386
+      - zlib1g:i386
+
+matrix:
+  include:
+    # FIXME (no OpenCV) {
+    # - os: linux
+    #   env: TOOLCHAIN=clang-libstdcxx CONFIG=Release
+    # - os: linux
+    #   env: TOOLCHAIN=clang-libstdcxx CONFIG=Debug
+    # }
+    # FIXME (glew, glfw3) {
+    # * https://travis-ci.org/ruslo/gatherer/jobs/133200753
+    # - os: linux
+    #   env: TOOLCHAIN=gcc-4-8 CONFIG=Release
+    # - os: linux
+    #   env: TOOLCHAIN=gcc-4-8 CONFIG=Debug
+    # }
+    - os: linux
+      env: TOOLCHAIN=android-ndk-r10e-api-19-armeabi-v7a-neon CONFIG=Release
+    - os: linux
+      env: TOOLCHAIN=android-ndk-r10e-api-19-armeabi-v7a-neon CONFIG=Debug
+
+    - os: osx
+      env: TOOLCHAIN=libcxx CONFIG=Release
+    - os: osx
+      env: TOOLCHAIN=libcxx CONFIG=Debug
+    # FIXME (no OpenCV) {
+    # - os: osx
+    #   env: TOOLCHAIN=clang-libstdcxx CONFIG=Release
+    # - os: osx
+    #   env: TOOLCHAIN=clang-libstdcxx CONFIG=Debug
+    # }
+    - os: osx
+      env: TOOLCHAIN=osx-10-9 CONFIG=Release
+    - os: osx
+      env: TOOLCHAIN=osx-10-9 CONFIG=Debug
+    - os: osx
+      osx_image: xcode7.3
+      env: TOOLCHAIN=ios-nocodesign-9-3-wo-armv7s CONFIG=Release
+    - os: osx
+      osx_image: xcode7.3
+      env: TOOLCHAIN=ios-nocodesign-9-3-wo-armv7s CONFIG=Debug
+    - os: osx
+      env: TOOLCHAIN=android-ndk-r10e-api-19-armeabi-v7a-neon CONFIG=Release
+    - os: osx
+      env: TOOLCHAIN=android-ndk-r10e-api-19-armeabi-v7a-neon CONFIG=Debug
+
+install:
+  # Info about OS
+  - uname -a
+
+  # Install Python 3
+  - if [[ "`uname`" == "Darwin" ]]; then travis_retry brew install python3; fi
+
+  # Install 'ant' for Android
+  - if [[ "`uname`" == "Darwin" ]]; then travis_retry brew install ant; fi
+
+  # Install Python package 'requests'
+  # 'easy_install3' is not installed by 'brew install python3' on OS X 10.9 Maverick
+  - if [[ "`uname`" == "Darwin" ]]; then pip3 install requests; fi
+  - if [[ "`uname`" == "Linux" ]]; then easy_install3 --user requests; fi
+
+  # install packages that are not in Hunter yet
+  - if [[ "`uname`" == "Darwin" ]]; then travis_retry brew install glfw3; fi
+  - if [[ "`uname`" == "Darwin" ]]; then travis_retry brew install glew; fi
+
+  # Install latest Polly toolchains and scripts
+  - wget https://github.com/ruslo/polly/archive/master.zip
+  - unzip master.zip
+  - POLLY_ROOT="`pwd`/polly-master"
+  - export PATH="${POLLY_ROOT}/bin:${PATH}"
+
+  # Install dependencies (CMake, Android NDK)
+  - install-ci-dependencies.py
+
+  # Tune locations
+  - export PATH="`pwd`/_ci/cmake/bin:${PATH}"
+
+  # Installed if toolchain is Android (otherwise directory doesn't exist)
+  - export ANDROID_NDK_r10e="`pwd`/_ci/android-ndk-r10e"
+
 script:
-    - mkdir build
-    - cd build
-    - cmake -DBUILD_SHARED_LIBS=${BUILD_SHARED_LIBS} ..
-    - cmake --build .
-notifications:
-    email:
-        recipients:
-            - ci@glfw.org
-    on_success: never
-    on_failure: always
+  - build.py --toolchain ${TOOLCHAIN} --config ${CONFIG} --archive gatherer --ios-multiarch --verbose --discard 10 --tail 200 --fwd HUNTER_USE_CACHE_SERVERS=ONLY
+
+before_deploy:
+  - export FILE_TO_UPLOAD=$(ls _archives/gatherer-*.tar.gz)
+
+deploy:
+  provider: releases
+  api_key:
+    - secure: "hyXfnJXKyUj4zyGF3oSuqIk5DREpRuxPQLFJqd78Ti3K/zmQxeNmv5/G5jCF8n310Rb+NoIvNsn7vlcriPOev9TL02G7j4Jbz2n+Si3TtNv2d6nXbW4oEyawMBiPrh+1xLL883euW3fQwh9oRxk4QZDWk9qsbGIJtYp0INUrePXKDW7SiDPTj9t6OCiH2NRCjWdGjxcqmlkVH/F05lh+DNoOauWVnoUkXIZ4NP4s4jDmnzUQy4RBt7fpVhSK8K5VbMLSTOklsBCAyHH6mor0jQx2bf6A9Ud6UnIK5uolMG3kyP+WQDYLdBazDP9PHD5XQYE9cM3VedPQWkKjOmS89p1zFsgRkfQ/v5He2UEX2bcDvXwCntQ9KATVjrCPQz86BQ1JfoBq8z3Q9VUEOH2o65gCOfQqP9Hv3sytzv6Lh3DfF2yEZPwPVu4DENuh6eWv1l38GLSGxzoO5YFyKUhJKRxIu38NMwSpUHOfEQdENy6lECBEx+PjwuA7eJPG0O5fDJlpXBwIMcQJWNjNR/wvl8bM5Su6C2MqA7lbG3GnrAec0g2nBxNARztINVw34EjV0GKbzNfEPvIT8wwAe3XDJTpDYdXMfpTPOb1Qs9QSV2pXZG2QSnZv2HpGgV7GB3gDLIme2Wb+jBaRuCbE0WxVQdeMzASOfwKJIxtWwi72TDk="
+
+  file_glob: true
+  file: "${FILE_TO_UPLOAD}"
+  skip_cleanup: true
+  on:
+    tags: true
